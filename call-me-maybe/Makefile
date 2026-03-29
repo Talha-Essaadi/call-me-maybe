@@ -4,9 +4,7 @@
 all: install
 
 install:
-# 	uv venv --system-site-packages || true
-# 	UV_CACHE_DIR="$(HOME)/goinfre/.uv-cache" uv sync
-	uv sync
+	UV_CACHE_DIR=/media/tessaadi/5a848bd7-3eeb-49de-b16e-1e88b37f9a77/uv-cache uv sync
 
 run:
 	uv run python -m src

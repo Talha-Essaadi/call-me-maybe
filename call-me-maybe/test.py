@@ -1,97 +1,70 @@
-import argparse
-import json
-from pathlib import Path
-from typing import List, Dict, Any
-from pydantic import BaseModel, ValidationError, Field
-from llm_sdk import Small_LLM_Model  # نسخة محلية من الـ SDK
+import random
+import math
+from llm_sdk import Small_LLM_Model
 
-# # ----------------------------
-# # 1. Pydantic Models
-# # ----------------------------
-# class FunctionParameter(BaseModel):
-#     type: str
 
-# class FunctionDefinition(BaseModel):
-#     name: str
-#     description: str
-#     parameters: Dict[str, FunctionParameter]
-#     returns: Dict[str, str]
-
-# class PromptResult(BaseModel):
-#     prompt: str
-#     fn_name: str
-#     args: Dict[str, Any]
-
-# # ----------------------------
-# # 2. CLI Arguments
-# # ----------------------------
-# parser = argparse.ArgumentParser()
-# parser.add_argument("--input", type=str, default="data/input")
-# parser.add_argument("--output", type=str, default="data/output/function_calling_results.json")
-# args = parser.parse_args()
-
-# input_dir = Path(args.input)
-# output_file = Path(args.output)
-
-# # ----------------------------
-# # 3. Validate paths & load JSON
-# # ----------------------------
-# function_def_path = input_dir / "function_definitions.json"
-# prompts_path = input_dir / "function_calling_tests.json"
-
-# if not function_def_path.exists() or not prompts_path.exists():
-#     raise FileNotFoundError("Required input JSON files are missing.")
-
-# with open(function_def_path, "r") as f:
-#     raw_functions = json.load(f)
-
-# with open(prompts_path, "r") as f:
-#     raw_prompts = json.load(f)
-
-# ----------------------------
-# 4. Validate JSON using Pydantic
-# ----------------------------
-# functions = [FunctionDefinition(**fd) for fd in raw_functions]
-
-# ----------------------------
-# 5. Initialize LLM
-# ----------------------------
 llm = Small_LLM_Model()
-vocab_path = llm.get_path_to_vocab_file()
-print(f"Vocabulary JSON path: {vocab_path}")
-with open(vocab_path, "r") as f:
-    vocabulary = json.load(f)
 
-# ----------------------------
-# 6. Processing Prompts
-# ----------------------------
-results: List[PromptResult] = []
+FUNCTION_LIST = [
+    "fn_add_numbers",
+    "fn_greet",
+    "fn_reverse_string",
+    "fn_get_square_root",
+    "fn_substitute_string_with_regex",
+]
 
-for prompt in raw_prompts:
-    try:
-        # Encode prompt
-        input_ids = llm.encode(prompt)
+prompt = f"""
+You are a function selection engine.
 
-        # Constrained decode (pseudo-code, implement according to your decoding logic)
-        decoded_json_str = llm.constrained_decode(
-            input_ids=input_ids,
-            vocabulary=vocabulary,
-            allowed_functions=[f.name for f in functions]
-        )
+Your task is ONLY to choose the most appropriate function
+from the list below that can solve the user's request.
 
-        # Validate JSON structure
-        decoded_obj = json.loads(decoded_json_str)
-        result = PromptResult(**decoded_obj)
-        results.append(result)
+Rules:
+- Output ONLY a function name.
+- Never output explanations.
+- Never output arguments.
+- Never output JSON.
+- Choose the BEST matching function.
+You MUST output ONLY the function name.
+Do NOT explain.
+Do NOT generate JSON.
+Do NOT answer the question.
 
-    except (ValidationError, json.JSONDecodeError) as e:
-        print(f"Error processing prompt '{prompt}': {e}")
+Available functions:
 
-# ----------------------------
-# 7. Write output JSON
-# ----------------------------
-output_file.parent.mkdir(parents=True, exist_ok=True)
-with open(output_file, "w") as f:
-    json.dump([r.dict() for r in results], f, indent=2)
+{FUNCTION_LIST}
 
-print(f"Processed {len(results)} prompts. Results saved to {output_file}")
+User request:
+"What is the sum of 265 and 345?"
+
+Answer with ONLY one function name:
+"""
+ids = llm.encode(prompt)
+ids = ids[0].tolist()
+
+
+def softmax(logits):
+    exp_logits = [math.exp(x) for x in logits]
+    sum_exp = sum(exp_logits)
+    return [x / sum_exp for x in exp_logits]
+
+
+max_tokens = 50
+for _ in range(max_tokens):
+    logits = llm.get_logits_from_input_ids(ids)
+    probs = softmax(logits)
+    
+
+    # next_token = random.choices(range(len(probs)), weights=probs, k=1)[0]
+    next_token = probs.index(max(probs))
+    
+    ids.append(next_token)
+    
+    text = llm.decode(ids)
+    if "\n" == text[-1]:
+        break
+
+
+text = llm.decode(ids)
+output = text.splitlines()[-1]
+print(text)

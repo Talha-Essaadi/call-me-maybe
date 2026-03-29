@@ -58,7 +58,7 @@
         "type": "string"
       },
       "regex": {
-        "tyzpe": "string"
+        "type": "string"
       },
       "replacement": {
         "type": "string"
