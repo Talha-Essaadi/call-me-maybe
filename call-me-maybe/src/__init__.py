@@ -4,59 +4,12 @@ import json
 import argparse
 from pathlib import Path
 from typing import List
-import textwrap
-
 from .loader import load_and_validate_prompts, validate_function_definitions
 from .models import FunctionDefinition
+from .utils import extract_params_from_prompt, generate_output_from_prompt, generate_param_prompt, generate_prompt, generate_output_for_param, load_vocabulary
 
 
 
-def generate_prompt(functions: List[FunctionDefinition], user_request: str) -> str:
-    function_names = [fn.name for fn in functions]
-
-    prompt = textwrap.dedent(f"""
-    You are a function selection engine.
-
-    Output ONLY one function name.
-
-    Available functions:
-    {function_names}
-
-    User request:
-    "{user_request}"
-
-    Answer:
-    """)
-
-    return prompt.strip()
-
-
-
-def generate_output_from_prompt(llm: Small_LLM_Model, prompt: str) -> str:
-    ids = llm.encode(prompt)[0].tolist()
-
-    max_tokens = 10
-
-    for _ in range(max_tokens):
-
-        logits = llm.get_logits_from_input_ids(ids)
-
-        next_token = max(range(len(logits)), key=lambda i: logits[i])
-
-        ids.append(next_token)
-
-        text = llm.decode(ids)
-
-        if (
-            next_token == llm._tokenizer.eos_token_id
-            or text.endswith("\n")
-        ):
-            break
-
-    text = llm.decode(ids)
-
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    return lines[-1]
 
 
 def main() -> None:
@@ -97,6 +50,7 @@ def main() -> None:
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+
         functions_definition = validate_function_definitions(functions_path)
         functions = []
         for fn in functions_definition:
@@ -111,6 +65,7 @@ def main() -> None:
         input_data = load_and_validate_prompts(input_path)
 
         llm = Small_LLM_Model()
+        vocab = load_vocabulary(llm)
 
         output_list = []
         for prompts_list in input_data:
@@ -124,17 +79,23 @@ def main() -> None:
             if fn_name not in [fn.name for fn in functions_definition]:
                 raise ValueError(f"Invalid function name: {fn_name}")
             function = functions_lookup[fn_name]
+            parameters = extract_params_from_prompt(
+                llm,
+                prompts_list.prompt,
+                function,
+                vocab
+            )
             result = {
                 "prompt": prompts_list.prompt,
                 "name": fn_name,
-                "parameters": function.parameters,
+                "parameters": parameters,
             }
             output_list.append(result)
             print(result)
 
         with output_path.open("w") as f:
             json.dump(output_list, f, indent=4)
-    except Exception as e:
+    except FileNotFoundError as e:
         print(f"Error: {e}")
         sys.exit(1)
 
