@@ -13,7 +13,7 @@ class PromptInput(BaseModel):
         return value
 
 
-ALLOWED_TYPES = {"string", "number"}
+ALLOWED_TYPES = {"string", "number", "boolean", "integer"}
 
 
 class ParameterDefinition(BaseModel):

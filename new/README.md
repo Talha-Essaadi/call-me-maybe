@@ -1,5 +1,12 @@
 # Knowledge: ✅ ❌
+
 - set "}" to float("-inf") if there psrsmeters and set "," if there not parameters
+- convert number to float
+
+
+
+Skipped invalid JSON: {"name": "fn_format_template", "parameters": {"template": "Hello {user}'}
+
 1. What is Function calling ?
 
 

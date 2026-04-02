@@ -49,15 +49,19 @@ def main() -> None:
 
 
         functions_definition = validate_function_definitions(functions_path)
+        with functions_path.open("r") as f:
+            functions = json.load(f)
         # print(functions_definition)
         input_data = load_and_validate_prompts(input_path)
-        generate_output = ""
+        generate_output = []
         JsonStructure(
             generate_output,
             functions_definition,
+            functions,
             input_data
             )
 
+    
         with output_path.open("w") as f:
             json.dump(generate_output, f, indent=4)
     except FileNotFoundError as e:
