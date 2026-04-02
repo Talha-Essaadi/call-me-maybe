@@ -1,11 +1,30 @@
 import json
 from pathlib import Path
 from pydantic import ValidationError
-from typing import Any, List
+from typing import List
 from .models import PromptInput, FunctionDefinition
 
 
 def load_and_validate_prompts(path: Path) -> List[PromptInput]:
+    """Load and validate prompt entries from a JSON file.
+
+    Parameters
+    ----------
+    path : Path
+        Path to a JSON file containing an array of prompt objects.
+
+    Returns
+    -------
+    list[PromptInput]
+        Validated prompt models.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the input file does not exist.
+    ValueError
+        If the file is not valid JSON or does not match expected schema.
+    """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
@@ -30,6 +49,25 @@ def load_and_validate_prompts(path: Path) -> List[PromptInput]:
 
 
 def validate_function_definitions(path: Path) -> List[FunctionDefinition]:
+    """Load and validate function definitions from a JSON file.
+
+    Parameters
+    ----------
+    path : Path
+        Path to a JSON file containing an array of function definitions.
+
+    Returns
+    -------
+    list[FunctionDefinition]
+        Validated function definition models.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the input file does not exist.
+    ValueError
+        If the file is not valid JSON or does not match expected schema.
+    """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 

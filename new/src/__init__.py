@@ -2,14 +2,22 @@ import sys
 import json
 import argparse
 from pathlib import Path
-from typing import List
+from typing import Any
 from .loader import load_and_validate_prompts, validate_function_definitions
-from .models import FunctionDefinition
 from .utils import JsonStructure
 
 
-
 def main() -> None:
+    """Run the CLI pipeline and write generated function calls.
+
+    The function reads input files, validates their content, runs the
+    constrained generation process, and writes normalized JSON output.
+
+    Returns
+    -------
+    None
+        The process exits with status code ``1`` on any failure.
+    """
     try:
         parser = argparse.ArgumentParser(
             description="Run Small LLM function selector."
@@ -47,24 +55,21 @@ def main() -> None:
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-
         functions_definition = validate_function_definitions(functions_path)
         with functions_path.open("r") as f:
-            functions = json.load(f)
-        # print(functions)
+            functions: list[dict[str, Any]] = json.load(f)
         input_data = load_and_validate_prompts(input_path)
-        generate_output = []
+        generate_output: list[dict[str, Any]] = []
         JsonStructure(
             generate_output,
             functions_definition,
             functions,
             input_data
-            )
+        )
 
-    
         with output_path.open("w") as f:
             json.dump(generate_output, f, indent=4)
-    except FileNotFoundError as e:
+    except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
 

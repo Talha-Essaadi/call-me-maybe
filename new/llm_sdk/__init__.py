@@ -1,31 +1,36 @@
 # ABOUTME: LLM SDK for local model inference using Hugging Face transformers.
-# ABOUTME: Provides Small_LLM_Model class for loading and running causal language models.
-
-import time
-from typing import Tuple
+# ABOUTME: Provides Small_LLM_Model class for loading and running causal
+# language models.
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizer, PreTrainedModel, logging
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizer,
+    logging,
+)
 from huggingface_hub import hf_hub_download
-import os
 
 
 logging.set_verbosity_error()  # keep the console clean
 
 
 class Small_LLM_Model:
-    """Utility class wrapping a lightweight Hugging Face causal-LM for fast, low-memory experimentation.
+    """Wrap a lightweight Hugging Face causal language model.
 
     Parameters
     ----------
-    model_name: str, default="Qwen/Qwen3-0.6B"
+    model_name : str, default="Qwen/Qwen3-0.6B"
         Identifier of the model on the HF Hub.
-    device: str | None, default=None
-        Computation device. If *None* we automatically select ``mps`` when available on macOS,
+    device : str | None, default=None
+        Computation device. If *None* we auto-select ``mps`` on macOS,
         ``cuda`` when available, otherwise we fall back to ``cpu``.
-    dtype: torch.dtype | None, default=None
-        Numerical precision. When using a GPU or MPS we default to ``float16`` to keep memory
-        usage reasonable; on CPU we keep ``float32`` for maximum compatibility.
+    dtype : torch.dtype | None, default=None
+        Numerical precision. On GPU/MPS we default to ``float16`` to
+        keep memory usage reasonable; on CPU we keep ``float32``.
+    trust_remote_code : bool, default=True
+        Whether to trust remote model code when loading from the Hub.
     """
 
     def __init__(
@@ -49,10 +54,11 @@ class Small_LLM_Model:
         self._device = device
 
         if dtype is None:
-            dtype = torch.float16 if self._device in ["cuda", "mps"] else torch.float32
+            dtype = torch.float16 if self._device in [
+                "cuda", "mps"] else torch.float32
         self._dtype = dtype
 
-        # --- load tokenizer & model -------------------------------------------------
+        # --- load tokenizer & model ------------------------------------------
         self._tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
             model_name, trust_remote_code=trust_remote_code
         )
@@ -73,54 +79,116 @@ class Small_LLM_Model:
         for p in self._model.parameters():
             p.requires_grad = False
 
-
     def encode(self, text: str) -> torch.Tensor:
-        """Tokenise *text* and return a 2-D ``input_ids`` tensor on the target device."""
+        """Encode text into model token ids.
+
+        Parameters
+        ----------
+        text : str
+            Input text to tokenize.
+
+        Returns
+        -------
+        torch.Tensor
+            Two-dimensional tensor of token ids on the configured device.
+        """
         ids = self._tokenizer.encode(text, add_special_tokens=False)
         return torch.tensor([ids], device=self._device, dtype=torch.long)
 
-
     def decode(self, ids: torch.Tensor | list[int]) -> str:
-        """Inverse of :py:meth:`encode`. Removes special tokens."""
+        """Decode token ids into text.
+
+        Parameters
+        ----------
+        ids : torch.Tensor | list[int]
+            Token ids to decode.
+
+        Returns
+        -------
+        str
+            Decoded text with special tokens removed.
+        """
         if isinstance(ids, torch.Tensor):
             ids = ids.tolist()
-        return self._tokenizer.decode(ids, skip_special_tokens=True)
-
+        return str(self._tokenizer.decode(ids, skip_special_tokens=True))
 
     def get_logits_from_input_ids(self, input_ids: list[int]) -> list[float]:
+        """Return next-token logits for a tokenized input sequence.
+
+        Parameters
+        ----------
+        input_ids : list[int]
+            Input token ids.
+
+        Returns
+        -------
+        list[float]
+            Raw logits for the next token across the full vocabulary.
         """
-        Given a list of input token ids, return the raw logits (no softmax) for the next token.
-        """
-        input_tensor = torch.tensor([input_ids], device=self._device, dtype=torch.long)
+        input_tensor = torch.tensor(
+            [input_ids],
+            device=self._device,
+            dtype=torch.long)
         with torch.no_grad():
             out = self._model(input_ids=input_tensor)
-        # Get logits for the last token in the sequence for the batch (batch size 1)
+        # Get logits for the last token in the sequence for the batch (batch
+        # size 1)
         logits = out.logits[0, -1].tolist()
         return [float(x) for x in logits]
 
-
     def get_path_to_vocab_file(self) -> str:
-        vocab_file_name = self._tokenizer.vocab_files_names.get('vocab_file', "vocab.json")
+        """Get local path to the tokenizer vocabulary file.
+
+        Returns
+        -------
+        str
+            Path to the downloaded vocabulary file.
+        """
+        vocab_file_name = str(
+            self._tokenizer.vocab_files_names.get(
+                "vocab_file", "vocab.json"
+            )
+        )
         vocab_path = hf_hub_download(
             repo_id=self._model_name,
             filename=vocab_file_name
         )
-        return vocab_path
-
+        return str(vocab_path)
 
     def get_path_to_merges_file(self) -> str:
-        merges_file_name = self._tokenizer.vocab_files_names.get('merges_file', "merges.txt")
+        """Get local path to the tokenizer merges file.
+
+        Returns
+        -------
+        str
+            Path to the downloaded merges file.
+        """
+        merges_file_name = str(
+            self._tokenizer.vocab_files_names.get(
+                "merges_file", "merges.txt"
+            )
+        )
         merges_path = hf_hub_download(
             repo_id=self._model_name,
             filename=merges_file_name
         )
-        return merges_path
-
+        return str(merges_path)
 
     def get_path_to_tokenizer_file(self) -> str:
-        tokenizer_file_name = self._tokenizer.vocab_files_names.get('tokenizer_file', "tokenizer.json")
+        """Get local path to the tokenizer JSON file.
+
+        Returns
+        -------
+        str
+            Path to the downloaded tokenizer JSON file.
+        """
+        tokenizer_file_name = str(
+            self._tokenizer.vocab_files_names.get(
+                "tokenizer_file", "tokenizer.json"
+            )
+        )
         tokenizer_path = hf_hub_download(
             repo_id=self._model_name,
             filename=tokenizer_file_name
         )
-        return tokenizer_path
+        return str(tokenizer_path)
