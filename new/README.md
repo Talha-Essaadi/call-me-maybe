@@ -1,15 +1,14 @@
 # Knowledge: ✅ ❌
 
-- set "}" to float("-inf") if there psrsmeters and set "," if there not parameters
-- convert number to float
 
 
 
-Skipped invalid JSON: {"name": "fn_format_template", "parameters": {"template": "Hello {user}'}
 
-1. update propmt to have just the function definataion
 
-1. dont break at "," use smart break
+
+
+
+
 
 
 # Project structure :
