@@ -41,11 +41,18 @@ def main() -> None:
             default="data/output/function_calling_results.json",
         )
 
+        parser.add_argument(
+            "--model",
+            type=str,
+            default="Qwen/Qwen3-0.6B",
+        )
+
         args = parser.parse_args()
 
         functions_path = Path(args.functions_definition)
         input_path = Path(args.input)
         output_path = Path(args.output)
+        model_name = args.model
 
         if not functions_path.is_file():
             raise FileNotFoundError(functions_path)
@@ -64,7 +71,8 @@ def main() -> None:
             generate_output,
             functions_definition,
             functions,
-            input_data
+            input_data,
+            model_name,
         )
 
         with output_path.open("w") as f:

@@ -33,7 +33,10 @@ class JsonStructure():
             output: List[dict[str, Any]],
             functions_definition: List[FunctionDefinition],
             functions: List[dict[str, Any]],
-            prompts: List[PromptInput]) -> None:
+            prompts: List[PromptInput],
+            model_name: str
+            ) -> None:
+            
         """Initialize generator state and start output generation.
 
         Parameters
@@ -52,7 +55,7 @@ class JsonStructure():
         None
         """
         self.output = output
-        self.llm = Small_LLM_Model()
+        self.llm = Small_LLM_Model(model_name=model_name)
         self.prompts = prompts
         self.functions = {func.name: func for func in functions_definition}
         self.funcs_ids: list[list[int]] = [
