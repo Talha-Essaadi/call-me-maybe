@@ -2,7 +2,6 @@ from llm_sdk import Small_LLM_Model
 from typing import Any, List
 from .models import FunctionDefinition, PromptInput
 import json
-from functools import lru_cache
 
 
 class JsonStructure():
@@ -56,18 +55,87 @@ class JsonStructure():
         self.llm = Small_LLM_Model()
         self.prompts = prompts
         self.functions = {func.name: func for func in functions_definition}
-        self.funcs_ids: list[list[int]] = [self.llm.encode(
-            func.name)[0].tolist() for func in self.functions.values()]
+        self.funcs_ids: list[list[int]] = [
+            self.llm.encode_ids(func.name) for func in self.functions.values()
+        ]
         self.functions_data = functions
-        self.vocab_str = {
-            k: v for k,
-            v in self.llm._tokenizer.get_vocab().items()}
-        self.vocab_id = {
-            v: k for k,
-            v in self.llm._tokenizer.get_vocab().items()}
+        self.function_data_by_name = {
+            function_data["name"]: function_data
+            for function_data in self.functions_data
+            if "name" in function_data
+        }
+        self.token_to_id = self.llm.get_vocab()
+        self.batch_size = 4
+        self.max_function_attempts = 3
+        self.max_value_steps = 80
+        self._encode_cache: dict[str, list[int]] = {}
+        self._logits_cache: dict[tuple[int, ...], list[float]] = {}
+        self._prompt_cache: dict[tuple[str, str], str] = {}
+        self._bool_allowed_tokens = set(self.llm.encode_ids("true false"))
         self.generate_output()
 
-    @lru_cache(maxsize=None)
+    def _encode_cached(self, text: str) -> list[int]:
+        """Encode text with memoization.
+
+        Parameters
+        ----------
+        text : str
+            Input text to encode.
+
+        Returns
+        -------
+        list[int]
+            Encoded token ids.
+        """
+        cached = self._encode_cache.get(text)
+        if cached is not None:
+            return cached
+        encoded = self.llm.encode_ids(text)
+        self._encode_cache[text] = encoded
+        return encoded
+
+    def _get_logits_cached(self, input_ids: list[int]) -> list[float]:
+        """Get logits for input ids with memoization.
+
+        Parameters
+        ----------
+        input_ids : list[int]
+            Token ids used as model input.
+
+        Returns
+        -------
+        list[float]
+            Next-token logits.
+        """
+        key = tuple(input_ids)
+        cached = self._logits_cache.get(key)
+        if cached is not None:
+            return list(cached)
+        logits = self.llm.get_logits_from_input_ids(input_ids)
+        self._logits_cache[key] = logits
+        return list(logits)
+
+    def _iter_prompt_batches(
+        self,
+        prompts: list[PromptInput],
+    ) -> list[list[PromptInput]]:
+        """Split prompts into fixed-size batches.
+
+        Parameters
+        ----------
+        prompts : list[PromptInput]
+            Prompt list to batch.
+
+        Returns
+        -------
+        list[list[PromptInput]]
+            Prompt batches in input order.
+        """
+        batches: list[list[PromptInput]] = []
+        for start in range(0, len(prompts), self.batch_size):
+            batches.append(prompts[start:start + self.batch_size])
+        return batches
+
     def _log(self, stage: str, message: str, color: str) -> None:
         """Print one colorized log line for generation tracing.
 
@@ -87,7 +155,6 @@ class JsonStructure():
         label = f"{self.BOLD}{color}[{stage}]{self.RESET}"
         print(f"{label} {message}")
 
-    @lru_cache(maxsize=None)
     def _log_separator(self, title: str, color: str) -> None:
         """Print a colorized section separator.
 
@@ -107,7 +174,125 @@ class JsonStructure():
             f"{self.BOLD}{color}{line}\n{title}\n{line}{self.RESET}"
         )
 
-    @lru_cache(maxsize=None)
+    def _default_value_for_type(self, param_type: str) -> Any:
+        """Return a safe default value for a parameter type.
+
+        Parameters
+        ----------
+        param_type : str
+            Parameter type string.
+
+        Returns
+        -------
+        Any
+            Default value compatible with the expected type.
+        """
+        if param_type == "number":
+            return 0.0
+        if param_type == "integer":
+            return 0
+        if param_type == "boolean":
+            return False
+        return ""
+
+    def _build_fallback_parameters(self, func_name: str) -> dict[str, Any]:
+        """Build fallback parameters for a function.
+
+        Parameters
+        ----------
+        func_name : str
+            Function name to build defaults for.
+
+        Returns
+        -------
+        dict[str, Any]
+            Parameter object filled with safe defaults.
+        """
+        function_definition = self.functions[func_name]
+        fallback: dict[str, Any] = {}
+        for (
+            parameter_name,
+            parameter_def,
+        ) in function_definition.parameters.items():
+            fallback[parameter_name] = self._default_value_for_type(
+                parameter_def.type
+            )
+        return fallback
+
+    def _recover_function_name(self, candidate: str) -> str:
+        """Recover a valid function name from an invalid candidate.
+
+        Parameters
+        ----------
+        candidate : str
+            Generated function name candidate.
+
+        Returns
+        -------
+        str
+            A valid function name from known definitions.
+        """
+        if candidate in self.functions:
+            return candidate
+
+        for function_name in self.functions:
+            if function_name.startswith(candidate):
+                return function_name
+            if candidate.startswith(function_name):
+                return function_name
+
+        first_function = next(iter(self.functions.keys()))
+        self._log(
+            "RECOVERY",
+            f"Fallback to `{first_function}` for invalid `{candidate}`",
+            self.YELLOW,
+        )
+        return first_function
+
+    def _normalize_output_item(
+        self,
+        prompt: str,
+        func_name: str,
+        raw_payload: str,
+    ) -> dict[str, Any]:
+        """Parse and normalize a generated output payload.
+
+        Parameters
+        ----------
+        prompt : str
+            Original user prompt.
+        func_name : str
+            Selected function name.
+        raw_payload : str
+            Raw generated JSON text.
+
+        Returns
+        -------
+        dict[str, Any]
+            Normalized output object with recovery fallback when needed.
+        """
+        try:
+            parsed_item = json.loads(raw_payload)
+            parameters = parsed_item.get("parameters", {})
+            if not isinstance(parameters, dict):
+                raise ValueError("Parameters payload is not an object")
+            return {
+                "prompt": prompt,
+                "name": func_name,
+                "parameters": parameters,
+            }
+        except (json.JSONDecodeError, ValueError) as error:
+            self._log(
+                "RECOVERY",
+                f"Using fallback parameters after parse failure: {error}",
+                self.YELLOW,
+            )
+            return {
+                "prompt": prompt,
+                "name": func_name,
+                "parameters": self._build_fallback_parameters(func_name),
+            }
+
     def generate_output(self) -> None:
         """Generate structured output items for all prompts.
 
@@ -116,64 +301,118 @@ class JsonStructure():
         None
         """
         self._log_separator("LLM FUNCTION CALL GENERATION", self.BLUE)
-        for prompt_index, user_request in enumerate(self.prompts, start=1):
-            if user_request.prompt.strip() is None:
-                self._log(
-                    "SKIP",
-                    f"Prompt #{prompt_index} has no text, skipping",
-                    self.RED,
-                )
-                continue
+        prompt_index = 0
+        for batch_id, prompt_batch in enumerate(
+            self._iter_prompt_batches(self.prompts),
+            start=1,
+        ):
             self._log(
-                "PROMPT",
-                f"#{prompt_index} {user_request.prompt}",
-                self.CYAN,
-            )
-            prompt = self.generate_prompt(
-                user_request.prompt, self.functions_data)
-            name = '{"name": "'
-            result = [prompt, name]
-
-            self._log(
-                "STEP 1",
-                "Selecting function name with constrained decoding",
+                "BATCH",
+                (
+                    f"Processing batch #{batch_id} with "
+                    f"{len(prompt_batch)} prompt(s)"
+                ),
                 self.BLUE,
             )
-            func_name = self.generate_func_name(result)
-            if func_name not in self.functions:
-                raise ValueError(
-                    f"Function {func_name} not found in definitions.")
-            self._log("FUNCTION", f"Selected `{func_name}`", self.GREEN)
+            for user_request in prompt_batch:
+                prompt_index += 1
+                if not user_request.prompt.strip():
+                    self._log(
+                        "SKIP",
+                        f"Prompt #{prompt_index} has no text, skipping",
+                        self.RED,
+                    )
+                    continue
+                try:
+                    self._log(
+                        "PROMPT",
+                        f"#{prompt_index} {user_request.prompt}",
+                        self.CYAN,
+                    )
 
-            func_data = [
-                f for f in self.functions_data if f["name"] == func_name][0]
-            result[0] = self.generate_prompt(user_request.prompt, func_data)
-            result.append('", "parameters": ')
+                    self._log(
+                        "STEP 1",
+                        "Selecting function name with constrained decoding",
+                        self.BLUE,
+                    )
 
-            self._log(
-                "STEP 2",
-                "Generating parameters with type constraints",
-                self.BLUE,
-            )
-            self.generate_parameters(result, func_name)
-            txt = "".join(result[1:])
+                    generated_name = ""
+                    base_prompt = self.generate_prompt(
+                        user_request.prompt,
+                        self.functions_data,
+                    )
+                    for attempt in range(1, self.max_function_attempts + 1):
+                        selection_result = [base_prompt, '{"name": "']
+                        generated_name = self.generate_func_name(
+                            selection_result
+                        )
+                        if generated_name in self.functions:
+                            break
+                        self._log(
+                            "RETRY",
+                            (
+                                f"Selection attempt {attempt} failed: "
+                                f"`{generated_name}`"
+                            ),
+                            self.YELLOW,
+                        )
 
-            item = txt.strip()
+                    func_name = self._recover_function_name(
+                        generated_name
+                    )
+                    self._log(
+                        "FUNCTION",
+                        f"Selected `{func_name}`",
+                        self.GREEN,
+                    )
 
-            if not item.endswith("}}"):
-                item += "}"
+                    func_data = self.function_data_by_name.get(
+                        func_name,
+                        {},
+                    )
+                    result = [
+                        self.generate_prompt(user_request.prompt, func_data),
+                        f'{{"name": "{func_name}',
+                    ]
+                    result.append('", "parameters": ')
 
-            try:
-                parsed_item = json.loads(item)
-                normalized_item = {
-                    "prompt": user_request.prompt,
-                    "name": func_name,
-                    "parameters": parsed_item["parameters"]
-                }
-                self.output.append(normalized_item)
-                self._log("OUTPUT", str(normalized_item), self.GREEN)
-            except json.JSONDecodeError:
-                self._log("ERROR", f"Skipped invalid JSON: {item}", self.RED)
+                    self._log(
+                        "STEP 2",
+                        "Generating parameters with type constraints",
+                        self.BLUE,
+                    )
+                    self.generate_parameters(result, func_name)
+                    item = "".join(result[1:]).strip()
+                    if not item.endswith("}}"):
+                        item += "}"
+
+                    normalized_item = self._normalize_output_item(
+                        prompt=user_request.prompt,
+                        func_name=func_name,
+                        raw_payload=item,
+                    )
+                    self.output.append(normalized_item)
+                    self._log("OUTPUT", str(normalized_item), self.GREEN)
+                except Exception as error:
+                    self._log(
+                        "ERROR",
+                        f"Prompt #{prompt_index} failed: {error}",
+                        self.RED,
+                    )
+                    fallback_function = next(iter(self.functions.keys()))
+                    fallback_item = {
+                        "prompt": user_request.prompt,
+                        "name": fallback_function,
+                        "parameters": self._build_fallback_parameters(
+                            fallback_function
+                        ),
+                    }
+                    self.output.append(fallback_item)
+                    self._log(
+                        "RECOVERY",
+                        f"Fallback output appended: {fallback_item}",
+                        self.YELLOW,
+                    )
 
     def generate_parameters(self, result: list[str], func_name: str) -> None:
         """Generate a JSON parameter object for one function.
@@ -233,8 +472,17 @@ class JsonStructure():
         step = 0
         while True:
             step += 1
-            ids = self.llm.encode("".join(result) + value)[0].tolist()
-            logits = self.llm.get_logits_from_input_ids(ids)
+            if step > self.max_value_steps:
+                self._log(
+                    "RECOVERY",
+                    "Max token steps reached, using default value",
+                    self.YELLOW,
+                )
+                tail = "}" if end else ","
+                self.handle_value(result, "", param_type, tail)
+                return end
+            ids = self._encode_cached("".join(result) + value)
+            logits = self._get_logits_cached(ids)
             next_token = self.constrained_decoding(logits, param_type, end)
             txt = self.llm.decode([next_token])
 
@@ -320,7 +568,25 @@ class JsonStructure():
         None
         """
         if param_type == "number":
-            token: Any = float(value.strip())
+            try:
+                token: Any = float(value.strip())
+            except ValueError:
+                token = self._default_value_for_type(param_type)
+                self._log(
+                    "RECOVERY",
+                    "Invalid number token, using default 0.0",
+                    self.YELLOW,
+                )
+        elif param_type == "integer":
+            try:
+                token = int(value.strip())
+            except ValueError:
+                token = self._default_value_for_type(param_type)
+                self._log(
+                    "RECOVERY",
+                    "Invalid integer token, using default 0",
+                    self.YELLOW,
+                )
         elif param_type == "boolean":
             token = value.strip().lower() == "true"
         else:
@@ -374,10 +640,12 @@ class JsonStructure():
             chars = ["}"]
             if end:
                 chars = [","]
-            logits[self.vocab_str.get(chars[0], -1)] = float("-inf")
+            token_id = self.token_to_id.get(chars[0], -1)
+            if token_id >= 0:
+                logits[token_id] = float("-inf")
             next_token = max(range(len(logits)), key=lambda i: logits[i])
         elif param_type == "boolean":
-            allowed_tokens = set(self.llm.encode("true false"))
+            allowed_tokens = set(self.llm.encode_ids("true false"))
             while True:
                 next_token = max(range(len(logits)), key=lambda i: logits[i])
                 if next_token not in allowed_tokens:
@@ -408,8 +676,8 @@ class JsonStructure():
             self.BLUE,
         )
         while True:
-            ids = self.llm.encode("".join(result))[0].tolist()
-            logits = self.llm.get_logits_from_input_ids(ids)
+            ids = self._encode_cached("".join(result))
+            logits = self._get_logits_cached(ids)
             next_token = self.constrained_decoding_for_func_names(
                 func_logits, logits)
             if not next_token:
@@ -476,8 +744,15 @@ class JsonStructure():
         str
             Rendered prompt text.
         """
-        return (
+        cache_key = (prompt, json.dumps(functions_data, sort_keys=True))
+        cached_prompt = self._prompt_cache.get(cache_key)
+        if cached_prompt is not None:
+            return cached_prompt
+
+        rendered_prompt = (
             f"Available functions:\n{functions_data}\n\n"
             f"User request: {prompt}\n\n"
             "Respond with a JSON object with keys 'name' and 'parameters'."
         )
+        self._prompt_cache[cache_key] = rendered_prompt
+        return rendered_prompt

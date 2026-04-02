@@ -95,6 +95,27 @@ class Small_LLM_Model:
         ids = self._tokenizer.encode(text, add_special_tokens=False)
         return torch.tensor([ids], device=self._device, dtype=torch.long)
 
+    def encode_ids(self, text: str) -> list[int]:
+        """Encode text and return token ids as a plain Python list.
+
+        Parameters
+        ----------
+        text : str
+            Input text to tokenize.
+
+        Returns
+        -------
+        list[int]
+            Token ids without special tokens.
+        """
+        return [
+            int(token_id)
+            for token_id in self._tokenizer.encode(
+                text,
+                add_special_tokens=False,
+            )
+        ]
+
     def decode(self, ids: torch.Tensor | list[int]) -> str:
         """Decode token ids into text.
 
@@ -111,6 +132,35 @@ class Small_LLM_Model:
         if isinstance(ids, torch.Tensor):
             ids = ids.tolist()
         return str(self._tokenizer.decode(ids, skip_special_tokens=True))
+
+    def decode_ids(self, ids: list[int]) -> str:
+        """Decode a list of token ids into text.
+
+        Parameters
+        ----------
+        ids : list[int]
+            Token ids to decode.
+
+        Returns
+        -------
+        str
+            Decoded text with special tokens removed.
+        """
+        return str(self._tokenizer.decode(ids, skip_special_tokens=True))
+
+    def get_vocab(self) -> dict[str, int]:
+        """Return tokenizer vocabulary mapping token text to token id.
+
+        Returns
+        -------
+        dict[str, int]
+            Vocabulary dictionary where keys are tokens and values are ids.
+        """
+        raw_vocab = self._tokenizer.get_vocab()
+        return {
+            str(token): int(token_id)
+            for token, token_id in raw_vocab.items()
+        }
 
     def get_logits_from_input_ids(self, input_ids: list[int]) -> list[float]:
         """Return next-token logits for a tokenized input sequence.
