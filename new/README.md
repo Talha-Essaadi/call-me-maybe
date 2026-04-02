@@ -7,7 +7,9 @@
 
 Skipped invalid JSON: {"name": "fn_format_template", "parameters": {"template": "Hello {user}'}
 
-1. What is Function calling ?
+1. update propmt to have just the function definataion
+
+1. dont break at "," use smart break
 
 
 # Project structure :

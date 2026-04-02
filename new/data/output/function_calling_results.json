@@ -50,8 +50,8 @@
         "prompt": "Run the query 'INSERT INTO logs VALUES (1, 2, 3)' on the system database",
         "name": "fn_execute_sql_query",
         "parameters": {
-            "query": 1,
-            "database": 2
+            "query": "INSERT INTO logs VALUES (1,2,3)",
+            "database": "system"
         }
     },
     {
@@ -67,7 +67,7 @@
         "name": "fn_read_file",
         "parameters": {
             "path": "C:\\Users\\john\\config.ini",
-            "encoding": 1
+            "encoding": "latin-1"
         }
     },
     {
@@ -81,7 +81,7 @@
         "prompt": "Format template: Say \"hello\" to {name}",
         "name": "fn_format_template",
         "parameters": {
-            "template": "Say \"hello\" to {name}\""
+            "template": "Say hello to {name}"
         }
     }
 ]

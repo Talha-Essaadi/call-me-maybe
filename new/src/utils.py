@@ -17,12 +17,14 @@ class JsonStructure():
 
     def generate_output(self):
         for user_request in self.prompts:
-            prompt = self.generate_prompt(user_request)
+            prompt = self.generate_prompt(user_request, self.functions_data)
             name = '{"name": "'
             result= [prompt, name]
             func_name = self.generate_func_name(result)
             if func_name not in self.functions:
                 raise ValueError(f"Function {func_name} not found in definitions.")
+            func_data = [f for f in self.functions_data if f["name"] == func_name][0]
+            result[0] = self.generate_prompt(user_request.prompt, func_data)
             result.append('", "parameters": ')
             self.generate_parameters(result, func_name)
             txt = "".join(result[1:])
@@ -67,17 +69,26 @@ class JsonStructure():
             print(data)
             print("#" * 50)
             print("token:", txt)
-            # if any(i in [",", "}"] for i in txt):
-            if any(i == "," for i in txt):
+            print("param_type:", param_type)
+            value = value.rstrip()
+            if param_type == "string" and value.endswith('",'):
+                print("breaking string")
+                self.handle_value(result, value, param_type, "")
+                break
+            elif param_type != "string" and any(i == "," for i in txt):
                 print("breaking")
                 self.handle_value(result, value, param_type, txt)
                 break
             try:
                 tmp = txt.rstrip()
                 if tmp.endswith("}}"):
+                    txt = txt.rstrip()
+                    print("ending with }}")
                     txt = txt[:-1]
-                print("tmp:", tmp)
-                parsed = json.loads("".join(result[result.index('", "parameters": ') + 1:] + [value] + [txt]))
+                print("tmp:", txt)
+                verify_json = "".join(result[result.index('", "parameters": ') + 1:] + [value] + [txt])
+                print("verify_json:", verify_json)
+                parsed = json.loads(verify_json)
                 if isinstance(parsed, dict):
                     self.handle_value(result, value, param_type, txt)
                     break
@@ -102,6 +113,8 @@ class JsonStructure():
             chars = [".", "-", ","]
             if end:
                 chars = [".", "-", "}"]
+            if param_type == "integer":
+                chars.remove(".")
 
             while True:
                 next_token = max(range(len(logits)), key=lambda i: logits[i])
@@ -165,9 +178,9 @@ class JsonStructure():
         return next_token
 
 
-    def generate_prompt(self, prompt):
+    def generate_prompt(self, prompt, functions_data):
         return (
-            f"Available functions:\n{self.functions_data}\n\n"
+            f"Available functions:\n{functions_data}\n\n"
             f"User request: {prompt}\n\n"
             "Respond with a JSON object with keys 'name' and 'parameters'."
             )
