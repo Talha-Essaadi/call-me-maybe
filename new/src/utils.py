@@ -52,7 +52,8 @@ class JsonStructure():
         parameters = self.functions[func_name].parameters.items()
         for i, (param_name, param_def) in enumerate(parameters):
             result.append(f'"{param_name}": ')
-            self.get_value(result, param_def.type, i + 1 == len(parameters))
+            if self.get_value(result, param_def.type, i + 1 == len(parameters)):
+                break
 
 
 
@@ -70,8 +71,8 @@ class JsonStructure():
             print("#" * 50)
             print("token:", txt)
             print("param_type:", param_type)
-            value = value.rstrip()
-            if param_type == "string" and value.endswith('",'):
+            tmp = value.rstrip()
+            if param_type == "string" and tmp.endswith('",'):
                 print("breaking string")
                 self.handle_value(result, value, param_type, "")
                 break
@@ -91,11 +92,13 @@ class JsonStructure():
                 parsed = json.loads(verify_json)
                 if isinstance(parsed, dict):
                     self.handle_value(result, value, param_type, txt)
-                    break
+                    print("valid json, breaking")
+                    return True
             except json.JSONDecodeError:
                 print("not a valid json yet")
                 value = value + txt
                 continue
+            return False
 
     def handle_value(self, result, value, param_type, txt):
         if param_type == "number":
